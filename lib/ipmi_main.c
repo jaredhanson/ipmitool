@@ -84,6 +84,8 @@ extern int csv_output;
 extern const struct valstr ipmi_privlvl_vals[];
 extern const struct valstr ipmi_authtype_session_vals[];
 
+extern struct ipmi_cmd ipmitool_cmd_list[]; /* Bob: this is in ../src/ipmitool.c */
+
 // Bob: this needs to be not a global single instance
 static struct ipmi_intf * ipmi_main_intf = NULL;
 
@@ -339,18 +341,9 @@ ipmi_parse_hex(const char *str)
 	return out;
 }
 
-/* ipmi_parse_options  -  helper function to handle parsing command line options
- *
- * @argc:	count of options
- * @argv:	list of options
- * @cmdlist:	list of supported commands
- * @intflist:	list of supported interfaces
- *
- * returns 0 on success
- * returns -1 on error
- */
-int
-ipmi_main(int argc, char ** argv,
+
+struct ipmi_intf *
+ipmi_main_start(int argc, char ** argv,
 		struct ipmi_cmd * cmdlist,
 		struct ipmi_intf_support * intflist)
 {
@@ -371,22 +364,27 @@ ipmi_main(int argc, char ** argv,
 	int authtype = -1;
 	char * tmp_pass = NULL;
 	char * tmp_env = NULL;
+
+        // Bob: these pointers are kept in ipmi_intf
 	char * hostname = NULL;
 	char * username = NULL;
 	char * password = NULL;
 	char * intfname = NULL;
-	char * progname = NULL;
 	char * oemtype  = NULL;
-	char * sdrcache = NULL;
-	unsigned char * kgkey = NULL;
 	char * seloem   = NULL;
+	unsigned char * kgkey = NULL;
+	char * sdrcache = NULL;
+	char * devfile  = NULL; /* Bob: devfile name duplicated in ipmi_intf struct */
+        // Bob: end of the list of pointers in ipmi_intf
+
+	char * progname = NULL;
 	int port = 0;
 	int devnum = 0;
 	int cipher_suite_id = 3; /* See table 22-19 of the IPMIv2 spec */
 	int argflag, i, found;
 	int rc = -1;
 	char sol_escape_char = SOL_ESCAPE_CHARACTER_DEFAULT;
-	char * devfile  = NULL;
+        struct ipmi_intf *intf = NULL;
 
 	/* save program name */
 	progname = strrchr(argv[0], '/');
@@ -844,8 +842,12 @@ ipmi_main(int argc, char ** argv,
 	} /* if (password != NULL && intfname != NULL) */
 
 	/* load interface */
-	ipmi_main_intf = ipmi_intf_load(intfname);
-	if (ipmi_main_intf == NULL) {
+        intf = ipmi_intf_load(intfname);
+
+        // Bob: global intf instance, should be per session
+	ipmi_main_intf = intf;
+
+	if (intf == NULL) {
 		lprintf(LOG_ERR, "Error loading interface %s", intfname);
 		goto out_free;
 	}
@@ -855,57 +857,57 @@ ipmi_main(int argc, char ** argv,
 
 	/* run OEM setup if found */
 	if (oemtype != NULL &&
-	    ipmi_oem_setup(ipmi_main_intf, oemtype) < 0) {
+	    ipmi_oem_setup(intf, oemtype) < 0) {
 		lprintf(LOG_ERR, "OEM setup for \"%s\" failed", oemtype);
 		goto out_free;
 	}
 
 	/* set session variables */
 	if (hostname != NULL)
-		ipmi_intf_session_set_hostname(ipmi_main_intf, hostname);
+		ipmi_intf_session_set_hostname(intf, hostname);
 	if (username != NULL)
-		ipmi_intf_session_set_username(ipmi_main_intf, username);
+		ipmi_intf_session_set_username(intf, username);
 	if (password != NULL)
-		ipmi_intf_session_set_password(ipmi_main_intf, password);
+		ipmi_intf_session_set_password(intf, password);
 	if (kgkey != NULL)
-		ipmi_intf_session_set_kgkey(ipmi_main_intf, kgkey);
+		ipmi_intf_session_set_kgkey(intf, kgkey);
 	if (port > 0)
-		ipmi_intf_session_set_port(ipmi_main_intf, port);
+		ipmi_intf_session_set_port(intf, port);
 	if (authtype >= 0)
-		ipmi_intf_session_set_authtype(ipmi_main_intf, (uint8_t)authtype);
+		ipmi_intf_session_set_authtype(intf, (uint8_t)authtype);
 	if (privlvl > 0)
-		ipmi_intf_session_set_privlvl(ipmi_main_intf, (uint8_t)privlvl);
+		ipmi_intf_session_set_privlvl(intf, (uint8_t)privlvl);
 	else
-		ipmi_intf_session_set_privlvl(ipmi_main_intf,
+		ipmi_intf_session_set_privlvl(intf,
 				IPMI_SESSION_PRIV_ADMIN);	/* default */
 	/* Adding retry and timeout for interface that support it */
 	if (retry > 0)
-		ipmi_intf_session_set_retry(ipmi_main_intf, retry);
+		ipmi_intf_session_set_retry(intf, retry);
 	if (timeout > 0)
-		ipmi_intf_session_set_timeout(ipmi_main_intf, timeout);
+		ipmi_intf_session_set_timeout(intf, timeout);
 
-	ipmi_intf_session_set_lookupbit(ipmi_main_intf, lookupbit);
-	ipmi_intf_session_set_sol_escape_char(ipmi_main_intf, sol_escape_char);
-	ipmi_intf_session_set_cipher_suite_id(ipmi_main_intf, cipher_suite_id);
+	ipmi_intf_session_set_lookupbit(intf, lookupbit);
+	ipmi_intf_session_set_sol_escape_char(intf, sol_escape_char);
+	ipmi_intf_session_set_cipher_suite_id(intf, cipher_suite_id);
 
-	ipmi_main_intf->devnum = devnum;
+	intf->devnum = devnum;
 
 	/* setup device file if given */
-	ipmi_main_intf->devfile = devfile;
+	intf->devfile = devfile;
 
 	/* Open the interface with the specified or default IPMB address */
-	ipmi_main_intf->my_addr = arg_addr ? arg_addr : IPMI_BMC_SLAVE_ADDR;
-	if (ipmi_main_intf->open != NULL)
-		ipmi_main_intf->open(ipmi_main_intf);
+	intf->my_addr = arg_addr ? arg_addr : IPMI_BMC_SLAVE_ADDR;
+	if (intf->open != NULL)
+		intf->open(intf);
 
 	/*
 	 * Attempt picmg discovery of the actual interface address unless
 	 * the users specified an address.
 	 *	Address specification always overrides discovery
 	 */
-	if (picmg_discover(ipmi_main_intf) && !arg_addr) {
+	if (picmg_discover(intf) && !arg_addr) {
 		lprintf(LOG_DEBUG, "Running PICMG Get Address Info");
-		addr = ipmi_picmg_ipmb_address(ipmi_main_intf);
+		addr = ipmi_picmg_ipmb_address(intf);
 		lprintf(LOG_INFO,  "Discovered IPMB-0 address 0x%x", addr);
 	}
 
@@ -914,13 +916,13 @@ ipmi_main(int argc, char ** argv,
 	 * used for open, Set the discovered IPMB address as my address if the
 	 * interface supports it.
 	 */
-	if (addr != 0 && addr != ipmi_main_intf->my_addr &&
-						ipmi_main_intf->set_my_addr) {
+	if (addr != 0 && addr != intf->my_addr &&
+						intf->set_my_addr) {
 		/*
 		 * Only set the interface address on interfaces which support
 		 * it
 		 */
-		(void) ipmi_main_intf->set_my_addr(ipmi_main_intf, addr);
+		(void) intf->set_my_addr(intf, addr);
 	}
 
 	/* If bridging addresses are specified, handle them */
@@ -934,43 +936,43 @@ ipmi_main(int argc, char ** argv,
 				transit_addr, transit_channel);
 			goto out_free;
 		}
-		ipmi_main_intf->target_addr = target_addr;
-		ipmi_main_intf->target_lun = target_lun ;
-		ipmi_main_intf->target_channel = target_channel ;
+		intf->target_addr = target_addr;
+		intf->target_lun = target_lun ;
+		intf->target_channel = target_channel ;
 
-		ipmi_main_intf->transit_addr    = transit_addr;
-		ipmi_main_intf->transit_channel = transit_channel;
+		intf->transit_addr    = transit_addr;
+		intf->transit_channel = transit_channel;
 
 
 		/* must be admin level to do this over lan */
-		ipmi_intf_session_set_privlvl(ipmi_main_intf, IPMI_SESSION_PRIV_ADMIN);
+		ipmi_intf_session_set_privlvl(intf, IPMI_SESSION_PRIV_ADMIN);
 		/* Get the ipmb address of the targeted entity */
-		ipmi_main_intf->target_ipmb_addr =
-					ipmi_picmg_ipmb_address(ipmi_main_intf);
+		intf->target_ipmb_addr =
+					ipmi_picmg_ipmb_address(intf);
 		lprintf(LOG_DEBUG, "Specified addressing     Target  %#x:%#x Transit %#x:%#x",
-					   ipmi_main_intf->target_addr,
-					   ipmi_main_intf->target_channel,
-					   ipmi_main_intf->transit_addr,
-					   ipmi_main_intf->transit_channel);
-		if (ipmi_main_intf->target_ipmb_addr) {
+					   intf->target_addr,
+					   intf->target_channel,
+					   intf->transit_addr,
+					   intf->transit_channel);
+		if (intf->target_ipmb_addr) {
 			lprintf(LOG_INFO, "Discovered Target IPMB-0 address %#x",
-					   ipmi_main_intf->target_ipmb_addr);
+					   intf->target_ipmb_addr);
 		}
 	}
 
 	lprintf(LOG_DEBUG, "Interface address: my_addr %#x "
 			   "transit %#x:%#x target %#x:%#x "
 			   "ipmb_target %#x\n",
-			ipmi_main_intf->my_addr,
-			ipmi_main_intf->transit_addr,
-			ipmi_main_intf->transit_channel,
-			ipmi_main_intf->target_addr,
-			ipmi_main_intf->target_channel,
-			ipmi_main_intf->target_ipmb_addr);
+			intf->my_addr,
+			intf->transit_addr,
+			intf->transit_channel,
+			intf->target_addr,
+			intf->target_channel,
+			intf->target_ipmb_addr);
 
 	/* parse local SDR cache if given */
 	if (sdrcache != NULL) {
-		ipmi_sdr_list_cache_fromfile(ipmi_main_intf, sdrcache);
+		ipmi_sdr_list_cache_fromfile(intf, sdrcache);
 	}
 	/* Parse SEL OEM file if given */
 	if (seloem != NULL) {
@@ -978,80 +980,198 @@ ipmi_main(int argc, char ** argv,
 	}
 
 	/* Enable Big Buffer when requested */
-	ipmi_main_intf->channel_buf_size = 0;
+	intf->channel_buf_size = 0;
 	if ( my_long_packet_size != 0 ) {
 		printf("Setting large buffer to %i\n", my_long_packet_size);
-		if (ipmi_kontronoem_set_large_buffer( ipmi_main_intf, my_long_packet_size ) == 0)
+		if (ipmi_kontronoem_set_large_buffer( intf, my_long_packet_size ) == 0)
 		{
 			my_long_packet_set = 1;
-			ipmi_main_intf->channel_buf_size = my_long_packet_size;
+			intf->channel_buf_size = my_long_packet_size;
 		}
 	}
 
-	ipmi_main_intf->cmdlist = cmdlist;
+	intf->cmdlist = cmdlist;
 
+#if 0
 	/* now we finally run the command */
 	if (argc-optind > 0)
-		rc = ipmi_cmd_run(ipmi_main_intf, argv[optind], argc-optind-1,
+		rc = ipmi_cmd_run(intf, argv[optind], argc-optind-1,
 				&(argv[optind+1]));
 	else
-		rc = ipmi_cmd_run(ipmi_main_intf, NULL, 0, NULL);
-
+		rc = ipmi_cmd_run(intf, NULL, 0, NULL);
+#endif
 	if (my_long_packet_set == 1) {
 		/* Restore defaults */
-		ipmi_kontronoem_set_large_buffer( ipmi_main_intf, 0 );
+		ipmi_kontronoem_set_large_buffer( intf, 0 );
 	}
 
+	if (intfname != NULL) 
+                intf->intfname = intfname;
+        else
+                intf->intfname = NULL;
+
+	if (hostname != NULL) 
+                intf->hostname = hostname;
+        else
+                intf->hostname = NULL;
+
+	if (username != NULL) 
+                intf->username = username;
+        else
+                intf->username = NULL;
+
+
+	if (password != NULL) 
+                intf->password = password;
+        else
+                intf->password = NULL;
+
+	if (oemtype != NULL)
+                intf->oemtype = oemtype;
+        else
+                intf->oemtype = NULL;
+
+	if (seloem != NULL) 
+                intf->seloem = seloem;
+        else
+                intf->seloem = NULL;
+
+	if (kgkey != NULL) 
+                intf->kgkey = kgkey;
+        else
+                intf->kgkey = NULL;
+
+	if (sdrcache != NULL) 
+                intf->sdrcache = sdrcache;
+        else
+                intf->sdrcache = NULL;
+
+	if (devfile) 
+                intf->devfile = devfile;
+        else
+                intf->devfile = NULL;
+
+out_free:
+        return intf;
+}
+
+int ipmi_main_finish(struct ipmi_intf *intf)
+{
 	/* clean repository caches */
-	ipmi_cleanup(ipmi_main_intf);
+	ipmi_cleanup(intf);
 
 	/* call interface close function if available */
-	if (ipmi_main_intf->opened > 0 && ipmi_main_intf->close != NULL)
-		ipmi_main_intf->close(ipmi_main_intf);
+	if (intf->opened > 0 && intf->close != NULL)
+		intf->close(intf);
 
-	out_free:
+
 	log_halt();
 
-	if (intfname != NULL) {
-		free(intfname);
-		intfname = NULL;
+	if (intf->intfname != NULL) {
+		free(intf->intfname);
+		intf->intfname = NULL;
 	}
-	if (hostname != NULL) {
-		free(hostname);
-		hostname = NULL;
+	if (intf->hostname != NULL) {
+		free(intf->hostname);
+		intf->hostname = NULL;
 	}
-	if (username != NULL) {
-		free(username);
-		username = NULL;
+	if (intf->username != NULL) {
+		free(intf->username);
+		intf->username = NULL;
 	}
-	if (password != NULL) {
-		free(password);
-		password = NULL;
+	if (intf->password != NULL) {
+		free(intf->password);
+		intf->password = NULL;
 	}
-	if (oemtype != NULL) {
-		free(oemtype);
-		oemtype = NULL;
+	if (intf->oemtype != NULL) {
+		free(intf->oemtype);
+		intf->oemtype = NULL;
 	}
-	if (seloem != NULL) {
-		free(seloem);
-		seloem = NULL;
+	if (intf->seloem != NULL) {
+		free(intf->seloem);
+		intf->seloem = NULL;
 	}
-	if (kgkey != NULL) {
-		free(kgkey);
-		kgkey = NULL;
+	if (intf->kgkey != NULL) {
+		free(intf->kgkey);
+		intf->kgkey = NULL;
 	}
-	if (sdrcache != NULL) {
-		free(sdrcache);
-		sdrcache = NULL;
+	if (intf->sdrcache != NULL) {
+		free(intf->sdrcache);
+		intf->sdrcache = NULL;
 	}
-	if (devfile) {
-		free(devfile);
-		devfile = NULL;
+	if (intf->devfile) {
+		free(intf->devfile);
+		intf->devfile = NULL;
 	}
 
-	return rc;
+	return 0;
 }
 
 
+struct ipmi_intf * ipmi_start_interface(char *intf_name, char *host, char *user, char *pass)
+{
+        int argc;
+        char *argv[9];
+        int rc;
+
+        if (!intf_name) 
+                intf_name  = "lan";
+        argc = 9;
+        argv[0] = "node-ffi-ipmi";
+        argv[1] = "-I";
+        argv[2] = intf_name;
+        argv[3] = "-H";
+        argv[4] = host;
+        argv[5] = "-U";
+        argv[6] = user;
+        argv[7] = "-P";
+        argv[8] = pass;
+
+        return ipmi_main_start(argc, argv, ipmitool_cmd_list, NULL);
+}
+
+int ipmi_finish_interface(struct ipmi_intf *intf)
+{
+        return ipmi_main_finish(intf);
+}
 
 
+// Bob: had to split calls to ipmi_main_start() and ipmi_main_finish()
+// so that multiple commands can be issued via API when this is used
+// as a library, not just a command
+
+// Note that this ipmi_main() is called in two places.
+// in ipmievd.c and ipmitool.c 
+// both are in ../src
+// ipmishell.c does not seem to use it.
+// ipmievd and impitool use different cmdlist which are
+// passed to ipmi_main.
+
+int
+ipmi_main(int argc, char ** argv,
+		struct ipmi_cmd * cmdlist,
+		struct ipmi_intf_support * intflist)
+{
+        struct ipmi_intf *intf;
+
+        if ((intf = ipmi_main_start(argc, argv, cmdlist, intflist)) == NULL) {
+                lprintf(LOG_ERR, "cannot start ipmi");
+                return -1;
+        }
+
+        return ipmi_main_finish(intf);
+}
+
+
+int
+ipmi_run_command(struct ipmi_intf *intf, int argc, char *argv[])
+{
+        if (!intf)
+                return -1;
+        if (argc < 1)
+                return -1;
+        if (!argv || !argv[0])
+                return -1;
+
+        return ipmi_cmd_run(intf, argv[0], argc-1,&(argv[1]));
+}

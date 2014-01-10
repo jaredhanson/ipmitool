@@ -868,6 +868,11 @@ struct ipmi_cmd ipmievd_cmd_list[] = {
 	{ NULL }
 };
 
+// Bob: hack to make it compile with changes in ../lib/ipmi_main.c
+struct ipmi_cmd ipmitool_cmd_list[] = {
+        {NULL}
+};
+
 int main(int argc, char ** argv)
 {
 	int rc;

@@ -193,6 +193,17 @@ struct ipmi_intf {
 	int (*keepalive)(struct ipmi_intf * intf);
 	int (*set_my_addr)(struct ipmi_intf * intf, uint8_t addr);
 
+
+        // Bob: moved from ipmi_main()
+	char * hostname;
+	char * username;
+	char * password;
+	char * intfname;
+	char * oemtype;
+	char * seloem;
+	unsigned char * kgkey;
+	char * sdrcache;
+
 };
 
 struct ipmi_intf * ipmi_intf_load(char * name);
