@@ -29,3 +29,8 @@ So this is a gross hack to allow controlling this software from external program
 
 
 
+todo
+====
+
+* be less hacky
+* make ipmitool internals to work without the big global ipmi_intf instance -- to allow multiple instances at a time.
