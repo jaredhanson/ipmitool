@@ -21,6 +21,9 @@ reasons
 * the sequence of calls to properly run a command and thus proper profile of function calls is not clearly defined
 
 
+ugly
+====
+
 So this is a gross hack to allow controlling this software from external program (written in other languages) via FFI.
 
 
